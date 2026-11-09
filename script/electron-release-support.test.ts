@@ -40,7 +40,7 @@ describe("Electron release support", () => {
     write(
       root,
       "packages/desktop/package.json",
-      JSON.stringify({ scripts: { build: "electron-vite build", package: "electron-builder" } }),
+      JSON.stringify({ scripts: { build: "bun run script/build.ts", pack: "bun run script/pack.ts" } }),
     )
 
     const output = writeElectronReleaseConfig(root, "WinMin/evil-opencode")
