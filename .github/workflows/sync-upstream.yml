@@ -26,7 +26,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: main
+          ref: ${{ github.ref_name }}
           fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
 
@@ -79,7 +79,7 @@ jobs:
 
           # 使用 GitHub CLI 触发 build-release workflow
           gh workflow run build-release.yml \
-            --ref main \
+            --ref "${{ github.ref_name }}" \
             -f opencode_version="$UPSTREAM_VERSION" \
             -f release_tag="$EVIL_TAG"
 
