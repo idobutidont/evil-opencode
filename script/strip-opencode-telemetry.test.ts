@@ -153,10 +153,45 @@ export const tracingLayer = Effect.fnUntraced(function* (options: Options | unde
   return Layer.effectContext(Effect.acquireRelease(Scope.make(), () => Effect.void))
 })
 `,
-    "packages/util/src/observability.ts": `import { Logging } from "./observability/logging"
+    "packages/util/src/observability.ts": `import * as NodeFileSystem from "@effect/platform-node/NodeFileSystem"
+import { Effect, Layer, Logger, References } from "effect"
+import { FetchHttpClient } from "effect/http"
+import { OtlpExporter, OtlpSerialization } from "effect/observability"
+import { Logging } from "./observability/logging"
 import { Otlp } from "./observability/otlp"
 
-export const layer = Logger.layer([...Logging.loggers(false, "latest"), ...Otlp.loggers()])
+export function layer(options: any) {
+  const app = { channel: "local" }
+  return Layer.unwrap(
+    Effect.gen(function* () {
+      const logs = Logger.layer(
+        [...Logging.loggers(true, app.channel), ...Otlp.loggers(options, app)],
+        { mergeWithExisting: false },
+      ).pipe(
+        Layer.provide(NodeFileSystem.layer),
+        Layer.provide(OtlpSerialization.layerJson),
+        Layer.provide(FetchHttpClient.layer),
+        Layer.provide(OtlpExporter.layerFlusher),
+        Layer.orDie,
+      )
+      return Layer.merge(logs, yield* Otlp.tracingLayer(options, app))
+    }),
+  )
+}
+`,
+    "packages/plugin/src/runtime-modules.ts": `export function discoverPluginRuntimeSpecifiers() {
+  for (const file of []) {
+    if (
+      normalized.startsWith("internal/") ||
+      normalized.includes("/internal/") ||
+      normalized.startsWith("source.") ||
+      normalized.startsWith("runtime") ||
+      normalized.startsWith("gui/")
+    ) {
+      continue
+    }
+  }
+}
 `,
     "packages/app/src/entry.tsx": `import { init } from "@sentry/solid"
 init({ dsn: "fixture" })
@@ -290,6 +325,8 @@ describe("stripTelemetry on a modern OpenCode checkout", () => {
     const originalErrors = verifyTelemetryDisabled(root)
     expect(originalErrors.some((error) => error.includes("active Sentry import remains"))).toBe(true)
     expect(originalErrors.some((error) => error.includes("OpenTelemetry exporter import"))).toBe(true)
+    expect(originalErrors.some((error) => error.includes("Effect observability import remains"))).toBe(true)
+    expect(originalErrors.some((error) => error.includes("observability modules are not excluded"))).toBe(true)
 
     stripTelemetry(root)
 
@@ -307,7 +344,15 @@ describe("stripTelemetry on a modern OpenCode checkout", () => {
     expect(fs.readFileSync(path.join(root, "packages/desktop/src/renderer/startup/sentry.ts"), "utf8")).toContain(
       'import("../../sentry-disabled")',
     )
-    expect(fs.readFileSync(path.join(root, "packages/util/src/observability.ts"), "utf8")).toContain("Logging.loggers(")
+    const observability = fs.readFileSync(path.join(root, "packages/util/src/observability.ts"), "utf8")
+    expect(observability).toContain("Logging.loggers(")
+    expect(observability).not.toContain("effect/observability")
+    expect(observability).not.toContain("OtlpExporter")
+    expect(observability).not.toContain("FetchHttpClient")
+
+    const runtimeModules = fs.readFileSync(path.join(root, "packages/plugin/src/runtime-modules.ts"), "utf8")
+    expect(runtimeModules).toContain('normalized.startsWith("observability")')
+    expect(runtimeModules).toContain('normalized.includes("/observability")')
 
     const once = snapshot(root)
     expect(stripTelemetry(root)).toEqual({ changes: [], warnings: [] })

@@ -62,7 +62,7 @@ jobs:
       - name: Test telemetry patcher
         run: |
           : > "$RUNNER_TEMP/empty-bunfig.toml"
-          bun --config="$RUNNER_TEMP/empty-bunfig.toml" test script/strip-opencode-telemetry.test.ts
+          bun --config="$RUNNER_TEMP/empty-bunfig.toml" test script/strip-opencode-telemetry.test.ts script/electron-release-support.test.ts
 
       - name: Remove Guardrails
         run: |
@@ -521,7 +521,6 @@ jobs:
         shell: bash
 
       - name: Download CLI distribution
-        if: hashFiles('opencode-src/packages/cli/**') != ''
         continue-on-error: true
         uses: actions/download-artifact@v4
         with:
@@ -562,10 +561,16 @@ jobs:
 
       - name: Ensure CLI is available for desktop build
         run: |
-          if [ -d packages/cli ] && [ ! -d packages/cli/dist ]; then
-            echo "CLI dist not found, building CLI for target..."
-            cd packages/cli
-            bun run script/build.ts
+          if [ -d packages/cli ]; then
+            TARGET_DIR="packages/cli/dist/cli-${OPENCODE_TARGET}"
+            if [ "$OPENCODE_TARGET" = "linux-x64" ] || [ "$OPENCODE_TARGET" = "darwin-x64" ] || [ "$OPENCODE_TARGET" = "windows-x64" ]; then
+              TARGET_DIR="packages/cli/dist/cli-${OPENCODE_TARGET}-baseline"
+            fi
+            if [ ! -d "$TARGET_DIR" ]; then
+              echo "CLI dist for target $TARGET_DIR not found, building CLI..."
+              cd packages/cli
+              bun run script/build.ts
+            fi
           fi
         working-directory: opencode-src
         shell: bash

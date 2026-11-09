@@ -170,65 +170,107 @@ function disableModernOtlp(root: string, changes: Change[]) {
 
 function disableV2Otlp(root: string, changes: Change[]) {
   const otlp = "packages/util/src/observability/otlp.ts"
-  if (!exists(root, otlp)) return
-
-  update(
-    root,
-    otlp,
-    "replace the OpenCode 2.x OTLP exporters with no-ops while retaining resource helpers",
-    (content) => {
-      if (content.includes(marker) && !content.includes("OTLPTraceExporter") && !content.includes("OtlpLogger")) {
-        return content
-      }
-      if (!content.includes("OTLPTraceExporter") && !content.includes("OtlpLogger")) return content
-      for (const anchor of [
-        'import { Effect, Layer, Scope } from "effect"',
-        'import { OtlpLogger } from "effect/observability"',
-        "function parseHeaders(",
-        "function resourceAttributes()",
-      ]) {
-        if (!content.includes(anchor)) {
-          throw new Error(`${otlp}: unknown OpenCode 2.x observability shape; refusing to alter unrelated code`)
+  if (exists(root, otlp)) {
+    update(
+      root,
+      otlp,
+      "replace the OpenCode 2.x OTLP exporters with no-ops while retaining resource helpers",
+      (content) => {
+        if (content.includes(marker) && !content.includes("OTLPTraceExporter") && !content.includes("OtlpLogger")) {
+          return content
         }
-      }
-
-      let result = replaceFunctionBody(content, "loggers", "\n  return []\n")
-      result = replaceFunctionBody(result, "tracingLayer", "\n  return Layer.empty\n")
-      result = result.replace('import { Effect, Layer, Scope } from "effect"', 'import { Effect, Layer } from "effect"')
-      result = result.replace(/^import \{ OtlpLogger \} from "effect\/observability"\r?\n/m, "")
-      result = result.replace(
-        "export function loggers(options: Options | undefined, app: App)",
-        "export function loggers(_options: Options | undefined, _app: App)",
-      )
-      result = result.replace(
-        "export const tracingLayer = Effect.fnUntraced(function* (options: Options | undefined, app: App)",
-        "export const tracingLayer = Effect.fnUntraced(function* (_options: Options | undefined, _app: App)",
-      )
-
-      const parseHeadersStart = result.indexOf("function parseHeaders(")
-      const resourceStart = result.indexOf("function resourceAttributes()")
-      if (parseHeadersStart === -1 || resourceStart === -1 || parseHeadersStart > resourceStart) {
-        throw new Error(`${otlp}: resource helpers were not found; refusing to alter unrelated upstream code`)
-      }
-      result = result.slice(0, parseHeadersStart) + result.slice(resourceStart)
-      result = result.replace(
-        "function resourceAttributes()",
-        `// ${marker}. Resource construction remains for API/test compatibility,\n` +
-          "// but no logger or trace exporter can be created by release binaries.\n" +
+        if (!content.includes("OTLPTraceExporter") && !content.includes("OtlpLogger")) return content
+        for (const anchor of [
+          'import { Effect, Layer, Scope } from "effect"',
+          'import { OtlpLogger } from "effect/observability"',
+          "function parseHeaders(",
           "function resourceAttributes()",
-      )
+        ]) {
+          if (!content.includes(anchor)) {
+            throw new Error(`${otlp}: unknown OpenCode 2.x observability shape; refusing to alter unrelated code`)
+          }
+        }
 
-      for (const value of ["OTLPTraceExporter", "OtlpLogger", "/v1/traces", "/v1/logs"]) {
-        if (result.includes(value)) throw new Error(`${otlp}: failed to remove exporter capability (${value})`)
-      }
-      return result
-    },
-    changes,
-  )
+        let result = replaceFunctionBody(content, "loggers", "\n  return []\n")
+        result = replaceFunctionBody(result, "tracingLayer", "\n  return Layer.empty\n")
+        result = result.replace('import { Effect, Layer, Scope } from "effect"', 'import { Effect, Layer } from "effect"')
+        result = result.replace(/^import \{ OtlpLogger \} from "effect\/observability"\r?\n/m, "")
+        result = result.replace(
+          "export function loggers(options: Options | undefined, app: App)",
+          "export function loggers(_options: Options | undefined, _app: App)",
+        )
+        result = result.replace(
+          "export const tracingLayer = Effect.fnUntraced(function* (options: Options | undefined, app: App)",
+          "export const tracingLayer = Effect.fnUntraced(function* (_options: Options | undefined, _app: App)",
+        )
+
+        const parseHeadersStart = result.indexOf("function parseHeaders(")
+        const resourceStart = result.indexOf("function resourceAttributes()")
+        if (parseHeadersStart === -1 || resourceStart === -1 || parseHeadersStart > resourceStart) {
+          throw new Error(`${otlp}: resource helpers were not found; refusing to alter unrelated upstream code`)
+        }
+        result = result.slice(0, parseHeadersStart) + result.slice(resourceStart)
+        result = result.replace(
+          "function resourceAttributes()",
+          `// ${marker}. Resource construction remains for API/test compatibility,\n` +
+            "// but no logger or trace exporter can be created by release binaries.\n" +
+            "function resourceAttributes()",
+        )
+
+        for (const value of ["OTLPTraceExporter", "OtlpLogger", "/v1/traces", "/v1/logs"]) {
+          if (result.includes(value)) throw new Error(`${otlp}: failed to remove exporter capability (${value})`)
+        }
+        return result
+      },
+      changes,
+    )
+  }
 
   const observability = "packages/util/src/observability.ts"
-  if (!exists(root, observability) || !read(root, observability).includes("Logging.loggers(")) {
-    throw new Error(`${observability}: local logging layer was not found; refusing to strip observability`)
+  if (exists(root, observability)) {
+    if (!read(root, observability).includes("Logging.loggers(")) {
+      throw new Error(`${observability}: local logging layer was not found; refusing to strip observability`)
+    }
+
+    update(
+      root,
+      observability,
+      "remove OTLP exporter layers and effect/observability imports",
+      (content) => {
+        if (!content.includes("effect/observability") && !content.includes("OtlpExporter")) return content
+        let result = content.replace(/^import \{ FetchHttpClient \} from "effect\/http"\r?\n/m, "")
+        result = result.replace(/^import \{ OtlpExporter, OtlpSerialization \} from "effect\/observability"\r?\n/m, "")
+        result = result.replace(/^\s*Layer\.provide\(OtlpSerialization\.layerJson\),\r?\n/m, "")
+        result = result.replace(/^\s*Layer\.provide\(FetchHttpClient\.layer\),\r?\n/m, "")
+        result = result.replace(/^\s*Layer\.provide\(OtlpExporter\.layerFlusher\),\r?\n/m, "")
+        for (const value of ["effect/observability", "OtlpExporter", "OtlpSerialization"]) {
+          if (result.includes(value)) throw new Error(`${observability}: failed to remove OTLP capability (${value})`)
+        }
+        return result
+      },
+      changes,
+    )
+  }
+
+  const pluginRuntime = "packages/plugin/src/runtime-modules.ts"
+  if (exists(root, pluginRuntime)) {
+    update(
+      root,
+      pluginRuntime,
+      "exclude observability from dynamically discovered plugin runtime modules",
+      (content) => {
+        if (content.includes('normalized.startsWith("observability")')) return content
+        const target = 'normalized.startsWith("gui/")'
+        if (!content.includes(target)) {
+          throw new Error(`${pluginRuntime}: unexpected structure; unable to exclude observability modules`)
+        }
+        return content.replace(
+          target,
+          `${target} ||\n        normalized.startsWith("observability") ||\n        normalized.includes("/observability")`,
+        )
+      },
+      changes,
+    )
   }
 }
 
@@ -358,6 +400,7 @@ export function verifyTelemetryDisabled(root: string) {
     ...files(root, "packages/cli/src"),
     ...files(root, "packages/core/src"),
     ...files(root, "packages/util/src"),
+    ...files(root, "packages/plugin/src"),
     ...files(root, "packages/app/src"),
     ...files(root, "packages/desktop/src"),
   ]
@@ -368,7 +411,8 @@ export function verifyTelemetryDisabled(root: string) {
     { pattern: /@opentelemetry\/exporter-/, label: "OpenTelemetry exporter import" },
     { pattern: /@effect\/opentelemetry\/(?:Tracer|NodeSdk)/, label: "Effect OpenTelemetry runtime import" },
     { pattern: /\bOtlpLogger\b/, label: "OTLP logger" },
-    { pattern: /\bOTLP[A-Za-z]*Exporter\b/, label: "OTLP exporter" },
+    { pattern: /\b(?:OTLP|Otlp)[A-Za-z]*Exporter\b/, label: "OTLP exporter" },
+    { pattern: /effect\/(?:unstable\/)?observability/, label: "Effect observability import" },
     { pattern: /\/v1\/(?:logs|traces)\b/, label: "OTLP endpoint" },
   ]
 
@@ -435,6 +479,19 @@ export function verifyTelemetryDisabled(root: string) {
     if (!exists(root, observability) || !read(root, observability).includes("Logging.loggers(")) {
       errors.push(`${observability}: local logging is not verifiably preserved`)
     }
+  }
+
+  const v2Observability = "packages/util/src/observability.ts"
+  if (exists(root, v2Observability)) {
+    const content = read(root, v2Observability)
+    if (content.includes("effect/observability") || content.includes("OtlpExporter")) {
+      errors.push(`${v2Observability}: active effect/observability import remains`)
+    }
+  }
+
+  const pluginRuntime = "packages/plugin/src/runtime-modules.ts"
+  if (exists(root, pluginRuntime) && !read(root, pluginRuntime).includes('normalized.startsWith("observability")')) {
+    errors.push(`${pluginRuntime}: observability modules are not excluded from plugin runtime discovery`)
   }
 
   const legacyOtlp = "packages/opencode/src/effect/observability.ts"
