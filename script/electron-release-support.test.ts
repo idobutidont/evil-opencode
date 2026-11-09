@@ -58,6 +58,41 @@ describe("Electron release support", () => {
     expect(generated.dmg.sign).toBeFalse()
   })
 
+  test("supports legacy OpenCode 1.x desktop packaging layout", async () => {
+    const root = temporaryRoot()
+    write(
+      root,
+      "packages/desktop/electron-builder.config.ts",
+      'import type { Configuration } from "electron-builder"\nexport default {}',
+    )
+    write(
+      root,
+      "packages/desktop/package.json",
+      JSON.stringify({ scripts: { build: "electron-vite build", package: "electron-builder" } }),
+    )
+
+    const output = writeElectronReleaseConfig(root, "WinMin/evil-opencode")
+    expect(fs.existsSync(output)).toBeTrue()
+  })
+
+  test("rejects unknown desktop packaging layouts", () => {
+    const root = temporaryRoot()
+    write(
+      root,
+      "packages/desktop/electron-builder.config.ts",
+      'export default {}',
+    )
+    write(
+      root,
+      "packages/desktop/package.json",
+      JSON.stringify({ scripts: { other: "true" } }),
+    )
+
+    expect(() => writeElectronReleaseConfig(root, "WinMin/evil-opencode")).toThrow(
+      "Unknown desktop packaging layout; refusing to generate an Electron release override",
+    )
+  })
+
   test("merges multi-architecture updater metadata and rejects version drift", () => {
     const root = temporaryRoot()
     const artifacts = path.join(root, "artifacts")

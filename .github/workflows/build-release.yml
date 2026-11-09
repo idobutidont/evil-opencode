@@ -219,6 +219,14 @@ jobs:
           retention-days: 5
           if-no-files-found: ignore
 
+      - name: Upload CLI distribution for desktop packaging
+        if: hashFiles('opencode-src/packages/cli/**') != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: opencode-cli-dist
+          path: opencode-src/packages/cli/dist
+          retention-days: 1
+
   # Build Windows versions on Windows
   build-windows:
     needs: fetch-version
@@ -451,7 +459,7 @@ jobs:
   # Build the current upstream Electron desktop application. This intentionally
   # replaces the obsolete Tauri pipeline; every matrix entry is required.
   build-desktop:
-    needs: fetch-version
+    needs: [fetch-version, build-linux]
     strategy:
       fail-fast: false
       matrix:
@@ -459,6 +467,7 @@ jobs:
           - name: macos-arm64
             os: macos-15
             target: aarch64-apple-darwin
+            opencode_target: darwin-arm64
             platform_flag: --mac --arm64
             bun_install_flags: --os=darwin --cpu=arm64
             artifact: opencode-desktop-darwin-arm64
@@ -466,6 +475,7 @@ jobs:
           - name: macos-x64
             os: macos-15-intel
             target: x86_64-apple-darwin
+            opencode_target: darwin-x64
             platform_flag: --mac --x64
             bun_install_flags: --os=darwin --cpu=x64
             artifact: opencode-desktop-darwin-x64
@@ -473,6 +483,7 @@ jobs:
           - name: windows-x64
             os: windows-latest
             target: x86_64-pc-windows-msvc
+            opencode_target: windows-x64
             platform_flag: --win --x64
             bun_install_flags: --os=win32 --cpu=x64
             artifact: opencode-desktop-windows-x64
@@ -480,6 +491,7 @@ jobs:
           - name: linux-x64
             os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
+            opencode_target: linux-x64
             platform_flag: --linux --x64
             bun_install_flags: --os=linux --cpu=x64
             artifact: opencode-desktop-linux-x64
@@ -487,6 +499,7 @@ jobs:
           - name: linux-arm64
             os: ubuntu-24.04-arm
             target: aarch64-unknown-linux-gnu
+            opencode_target: linux-arm64
             platform_flag: --linux --arm64
             bun_install_flags: --os=linux --cpu=arm64
             artifact: opencode-desktop-linux-arm64
@@ -494,6 +507,10 @@ jobs:
     name: desktop (${{ matrix.name }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
+    env:
+      OPENCODE_VERSION: ${{ needs.fetch-version.outputs.version }}
+      OPENCODE_CHANNEL: prod
+      OPENCODE_TARGET: ${{ matrix.opencode_target }}
     steps:
       - name: Checkout this repo
         uses: actions/checkout@v4
@@ -502,6 +519,14 @@ jobs:
         run: |
           git clone --depth 1 --branch v${{ needs.fetch-version.outputs.version }} https://github.com/anomalyco/opencode.git opencode-src
         shell: bash
+
+      - name: Download CLI distribution
+        if: hashFiles('opencode-src/packages/cli/**') != ''
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: opencode-cli-dist
+          path: opencode-src/packages/cli/dist
 
       - name: Setup Node
         uses: actions/setup-node@v4
@@ -535,18 +560,32 @@ jobs:
           fi
         shell: bash
 
+      - name: Ensure CLI is available for desktop build
+        run: |
+          if [ -d packages/cli ] && [ ! -d packages/cli/dist ]; then
+            echo "CLI dist not found, building CLI for target..."
+            cd packages/cli
+            bun run script/build.ts
+          fi
+        working-directory: opencode-src
+        shell: bash
+
       - name: Type-check patched Electron desktop
-        run: bun run --cwd packages/desktop typecheck
+        run: |
+          if jq -e '.scripts.typecheck' packages/desktop/package.json >/dev/null 2>&1; then
+            bun run --cwd packages/desktop typecheck
+          fi
         working-directory: opencode-src
         shell: bash
 
       - name: Prepare Electron desktop
-        run: bun ./scripts/prepare.ts
+        run: |
+          if [ -f ./scripts/prepare.ts ]; then
+            bun ./scripts/prepare.ts
+          fi
         working-directory: opencode-src/packages/desktop
         shell: bash
         env:
-          OPENCODE_VERSION: ${{ needs.fetch-version.outputs.version }}
-          OPENCODE_CHANNEL: prod
           RUST_TARGET: ${{ matrix.target }}
 
       - name: Build Electron desktop
@@ -555,7 +594,6 @@ jobs:
         shell: bash
         env:
           NODE_OPTIONS: --max-old-space-size=4096
-          OPENCODE_CHANNEL: prod
 
       - name: Package unsigned Electron desktop
         run: npx electron-builder ${{ matrix.platform_flag }} --publish never --config electron-builder.evil.config.ts
@@ -563,13 +601,12 @@ jobs:
         shell: bash
         timeout-minutes: 45
         env:
-          OPENCODE_CHANNEL: prod
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
 
       - name: Archive macOS application bundle
         if: runner.os == 'macOS'
         run: |
-          if [ "${{ matrix.target }}" = "aarch64-apple-darwin" ]; then
+          if [ "${{ matrix.opencode_target }}" = "darwin-arm64" ] || [ "${{ matrix.target }}" = "aarch64-apple-darwin" ]; then
             app_dir="mac-arm64"
             archive="opencode-desktop-mac-arm64.app.tar.gz"
           else

@@ -24,7 +24,8 @@ export function writeElectronReleaseConfig(root: string, repository: string) {
   }
 
   const source = fs.readFileSync(upstreamConfig, "utf8")
-  if (!source.includes("electron-builder")) {
+  const pkg = JSON.parse(fs.readFileSync(packageJson, "utf8")) as { scripts?: Record<string, string> }
+  if (!source.includes("electron-builder") || !pkg.scripts?.build || !(pkg.scripts?.package || pkg.scripts?.pack)) {
     throw new Error("Unknown desktop packaging layout; refusing to generate an Electron release override")
   }
 
